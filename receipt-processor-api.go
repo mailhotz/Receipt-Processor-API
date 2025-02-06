@@ -139,49 +139,19 @@ func CalculatePoints(receipt *Receipt, isStepThrough bool) int {
 	result := 0
 
 	//One point for every alphanumeric
-	regex := regexp.MustCompile(`\w|\d+`)
-	result += len(regex.FindAllString(receipt.Retailer, -1))
-	if isStepThrough {
-		DebugObject.Alphanumeric = "Regex to match alphanumeric characters added a score of " + strconv.Itoa(result)
-	}
+	result += CalculateAlphanumeric(receipt.Retailer, isStepThrough)
 
 	//50 points if total is round dollar amount
-	match_round, err_round := regexp.MatchString(`\d+\.00`, receipt.Total)
-	if err_round == nil && match_round {
-		result += 50
-		if isStepThrough {
-			DebugObject.RoundTotal = "Total is a rounded dollar, adding 50 points"
-		}
-	}
+	result += CalculateIsRoundTotal(receipt.Total, isStepThrough)
 
 	//25 points if total is a multipe of .25
-	match_multiple, err_multiple := regexp.MatchString(`\d+\.(00|25|50|75)`, receipt.Total)
-	if err_multiple == nil && match_multiple {
-		result += 25
-		if isStepThrough {
-			DebugObject.MultipleTotal = "Total is a multiple of .25, adding 25 points"
-		}
-	}
+	result += CalculateIsMultipleOfTwentyFive(receipt.Total, isStepThrough)
 
 	//5 points for every 2 items of receipt
-	var itemMultiplier = (len(receipt.Items) / 2) * 5
-	result += itemMultiplier
-	if isStepThrough {
-		DebugObject.NumberOfItems = "There are " + strconv.Itoa(len(receipt.Items)) + " items. Adding " + strconv.Itoa(itemMultiplier) + " points"
-	}
+	result += CalculateNumberOfItems(len(receipt.Items), isStepThrough)
 
 	//Trimmed length of item description is multiple of 3 multiply by 0.2 and round to nearest int
-	for _, i := range receipt.Items {
-		var trimmedDescription = strings.TrimSpace(i.ShortDescription)
-
-		if len(trimmedDescription)%3 == 0 {
-			var intToAdd = decimal.Decimal.Mul(i.priceAsDecimal, decimal.NewFromFloat(0.2)).RoundUp(0).IntPart()
-			result += int(intToAdd)
-			if isStepThrough {
-				DebugObject.DescriptionMultiple = append(DebugObject.DescriptionMultiple, trimmedDescription+" is multiple of three, adding "+strconv.Itoa(int(intToAdd))+" points")
-			}
-		}
-	}
+	result += CalculateItemDescriptionPoints(receipt.Items, isStepThrough)
 
 	//LLM Step
 	if isStepThrough {
@@ -189,26 +159,103 @@ func CalculatePoints(receipt *Receipt, isStepThrough bool) int {
 	}
 
 	//6 points if the day is odd on purchase
-	regex_for_day := regexp.MustCompile(`-(\d{2}|\d{1})$`)
-	var day = strings.Trim(string(regex_for_day.Find([]byte(receipt.PurchaseDate))), "-")
-	var day_int, err = strconv.Atoi(day)
-	if day_int%2 == 1 && err == nil {
-		result += 6
-		if isStepThrough {
-			DebugObject.OddDay = "Day is odd, adding 6 points"
-		}
-	}
+	result += CalculateIsOddDay(receipt.PurchaseDate, isStepThrough)
 
 	//10 points if purchases between 2pm and 4pm
-	match_time, err_time := regexp.MatchString(`(14|15):\d{2}`, receipt.PurchaseTime)
-	if err_time == nil && match_time {
-		result += 10
+	result += CalculateIsPurchaseTimeForPoint(receipt.PurchaseTime, isStepThrough)
+
+	return result
+}
+
+func CalculateAlphanumeric(retailer string, isStepThrough bool) int {
+	regex := regexp.MustCompile(`\w|\d+`)
+	var result = len(regex.FindAllString(retailer, -1))
+	if isStepThrough {
+		DebugObject.Alphanumeric = "Regex to match alphanumeric characters added a score of " + strconv.Itoa(result)
+	}
+
+	return result
+}
+
+func CalculateIsRoundTotal(total string, isStepThrough bool) int {
+	match_round, err_round := regexp.MatchString(`\d+\.00`, total)
+	if err_round == nil && match_round {
 		if isStepThrough {
-			DebugObject.PurchaseTime = "Purchase was between 2pm and 4pm, adding 10 points"
+			DebugObject.RoundTotal = "Total is a rounded dollar, adding 50 points"
+		}
+
+		return 50
+	}
+
+	return 0
+}
+
+func CalculateIsMultipleOfTwentyFive(total string, isStepThrough bool) int {
+	match_multiple, err_multiple := regexp.MatchString(`\d+\.(00|25|50|75)`, total)
+	if err_multiple == nil && match_multiple {
+		if isStepThrough {
+			DebugObject.MultipleTotal = "Total is a multiple of .25, adding 25 points"
+		}
+
+		return 25
+	}
+
+	return 0
+}
+
+func CalculateNumberOfItems(numOfItems int, isStepThrough bool) int {
+	var itemMultiplier = (numOfItems / 2) * 5
+	if isStepThrough {
+		DebugObject.NumberOfItems = "There are " + strconv.Itoa(numOfItems) + " items. Adding " + strconv.Itoa(itemMultiplier) + " points"
+	}
+
+	return itemMultiplier
+}
+
+func CalculateItemDescriptionPoints(items []Item, isStepThrough bool) int {
+	result := 0
+	for _, i := range items {
+		var trimmedDescription = strings.TrimSpace(i.ShortDescription)
+
+		if len(trimmedDescription)%3 == 0 {
+			var intToAdd = decimal.Decimal.Mul(i.priceAsDecimal, decimal.NewFromFloat(0.2)).RoundUp(0).IntPart()
+			result += int(intToAdd)
+
+			if isStepThrough {
+				DebugObject.DescriptionMultiple = append(DebugObject.DescriptionMultiple, trimmedDescription+" is multiple of three, adding "+strconv.Itoa(int(intToAdd))+" points")
+			}
 		}
 	}
 
 	return result
+}
+
+func CalculateIsOddDay(date string, isStepThrough bool) int {
+	regex_for_day := regexp.MustCompile(`-(\d{2}|\d{1})$`)
+	var day = strings.Trim(string(regex_for_day.Find([]byte(date))), "-")
+	var day_int, err = strconv.Atoi(day)
+	if day_int%2 == 1 && err == nil {
+		if isStepThrough {
+			DebugObject.OddDay = "Day is odd, adding 6 points"
+		}
+
+		return 6
+	}
+
+	return 0
+}
+
+func CalculateIsPurchaseTimeForPoint(time string, isStepThrough bool) int {
+	match_time, err_time := regexp.MatchString(`(14|15):\d{2}`, time)
+	if err_time == nil && match_time {
+		if isStepThrough {
+			DebugObject.PurchaseTime = "Purchase was between 2pm and 4pm, adding 10 points"
+		}
+
+		return 10
+	}
+
+	return 0
 }
 
 func main() {
