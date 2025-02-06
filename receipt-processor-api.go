@@ -29,20 +29,19 @@ type Receipt struct {
 }
 
 type Result struct {
-	Alphanumeric        string `json:"alphanumeric"`
-	RoundTotal          string `json:"roundTotal"`
-	MultipleTotal       string `json:"multipleTotal"`
-	NumberOfItems       string `json:"numberOfItems"`
-	DescriptionMultiple string `json:"descriptionMultiple"`
-	Llm                 string `json:"llm"`
-	OddDay              string `json"oddDay"`
-	PurchaseTime        string `json:"purchaseTime"`
-	Result              int    `json:"result"`
+	Alphanumeric        string   `json:"alphanumeric"`
+	RoundTotal          string   `json:"roundTotal"`
+	MultipleTotal       string   `json:"multipleTotal"`
+	NumberOfItems       string   `json:"numberOfItems"`
+	DescriptionMultiple []string `json:"descriptionMultiple"`
+	Llm                 string   `json:"LLM"`
+	OddDay              string   `json:"oddDay"`
+	PurchaseTime        string   `json:"purchaseTime"`
+	Result              int      `json:"result"`
 }
 
 var Receipts []Receipt
 var DebugObject Result
-var PointsDebugResponse string
 
 func CreateReceipt(c *gin.Context) {
 	var receipt Receipt
@@ -64,6 +63,8 @@ func CreateReceipt(c *gin.Context) {
 		}
 	}
 
+	//Note: If this was going into production I'd validate dates & times as well, but not going to for this quick API test
+
 	receipt.id = uuid.New().String()
 	Receipts = append(Receipts, receipt)
 
@@ -75,7 +76,6 @@ func ValidateTotal(receipt *Receipt) error {
 	if err != nil {
 		return err
 	}
-
 	receipt.totalAsDecimal = val
 	return nil
 }
@@ -142,12 +142,11 @@ func CalculatePoints(receipt *Receipt, isStepThrough bool) int {
 	regex := regexp.MustCompile(`\w|\d+`)
 	result += len(regex.FindAllString(receipt.Retailer, -1))
 	if isStepThrough {
-		DebugObject.Alphanumeric = "Regex to match alphanumeric characters added a score of:" + strconv.Itoa(result)
+		DebugObject.Alphanumeric = "Regex to match alphanumeric characters added a score of " + strconv.Itoa(result)
 	}
 
 	//50 points if total is round dollar amount
-	var totalValue = receipt.totalAsDecimal.Round(2).String()
-	match_round, err_round := regexp.MatchString(`\d+\.00`, totalValue)
+	match_round, err_round := regexp.MatchString(`\d+\.00`, receipt.Total)
 	if err_round == nil && match_round {
 		result += 50
 		if isStepThrough {
@@ -156,7 +155,7 @@ func CalculatePoints(receipt *Receipt, isStepThrough bool) int {
 	}
 
 	//25 points if total is a multipe of .25
-	match_multiple, err_multiple := regexp.MatchString(`\d+\.(00|25|50|75)`, totalValue)
+	match_multiple, err_multiple := regexp.MatchString(`\d+\.(00|25|50|75)`, receipt.Total)
 	if err_multiple == nil && match_multiple {
 		result += 25
 		if isStepThrough {
@@ -168,19 +167,18 @@ func CalculatePoints(receipt *Receipt, isStepThrough bool) int {
 	var itemMultiplier = (len(receipt.Items) / 2) * 5
 	result += itemMultiplier
 	if isStepThrough {
-		DebugObject.NumberOfItems = "There are " + strconv.Itoa(len(receipt.Items)) + " items. Adding:" + strconv.Itoa(itemMultiplier)
+		DebugObject.NumberOfItems = "There are " + strconv.Itoa(len(receipt.Items)) + " items. Adding " + strconv.Itoa(itemMultiplier) + " points"
 	}
 
 	//Trimmed length of item description is multiple of 3 multiply by 0.2 and round to nearest int
 	for _, i := range receipt.Items {
 		var trimmedDescription = strings.TrimSpace(i.ShortDescription)
-		var trimmedDescriptionLength = len(trimmedDescription)
 
-		if trimmedDescriptionLength%3 == 0 {
-			var intToAdd = decimal.Decimal.Mul(decimal.NewFromInt(int64(trimmedDescriptionLength)), decimal.NewFromFloat(0.2)).Round(0).IntPart()
+		if len(trimmedDescription)%3 == 0 {
+			var intToAdd = decimal.Decimal.Mul(i.priceAsDecimal, decimal.NewFromFloat(0.2)).RoundUp(0).IntPart()
 			result += int(intToAdd)
 			if isStepThrough {
-				DebugObject.DescriptionMultiple += trimmedDescription + " is multiple of three, adding:" + strconv.Itoa(int(intToAdd))
+				DebugObject.DescriptionMultiple = append(DebugObject.DescriptionMultiple, trimmedDescription+" is multiple of three, adding "+strconv.Itoa(int(intToAdd))+" points")
 			}
 		}
 	}
@@ -191,7 +189,7 @@ func CalculatePoints(receipt *Receipt, isStepThrough bool) int {
 	}
 
 	//6 points if the day is odd on purchase
-	regex_for_day := regexp.MustCompile(`-(\d{1}|\d{2})-`)
+	regex_for_day := regexp.MustCompile(`-(\d{2}|\d{1})$`)
 	var day = strings.Trim(string(regex_for_day.Find([]byte(receipt.PurchaseDate))), "-")
 	var day_int, err = strconv.Atoi(day)
 	if day_int%2 == 1 && err == nil {
